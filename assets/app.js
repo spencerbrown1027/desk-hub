@@ -82,6 +82,127 @@
   var L = latest ? latest.levels : {};
   var rates = D.rates;
 
+  /* ================= LIVE TREASURIES (Tradeweb OTC via CNBC public quote feed) ================= */
+  // Separate from brief history: polled in the browser while the tab is open. If the live call is
+  // blocked (offline, CORS, rate limit) we show the snapshot taken at the last hub build instead.
+  var LIVE = (function () {
+    var SYMS = ['US1Y', 'US2Y', 'US5Y', 'US10Y', 'US30Y'];
+    var URL = 'https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol?symbols=' + encodeURIComponent(SYMS.join('|')) +
+      '&requestMethod=itv&noform=1&partnerId=2&fund=1&exthrs=1&output=json&events=1';
+    var EVERY = 120000; // auto-refresh interval while visible (ms)
+    var snap = D.liveUst || null;
+    var state = { quotes: snap ? snap.quotes : null, mode: snap ? 'snapshot' : 'none', fetchedAt: snap ? new Date(snap.fetched_at) : null, error: '', busy: false };
+    var subs = [], timer = null, auto = store.get('deskhub.liveAuto', true);
+    function num(s) { var v = parseFloat(String(s == null ? '' : s).replace(/[%,]/g, '')); return isFinite(v) ? v : null; }
+    function parse(j) {
+      var arr = (j && j.FormattedQuoteResult && j.FormattedQuoteResult.FormattedQuote) || [], out = {};
+      arr.forEach(function (q) {
+        var y = num(q.last); if (SYMS.indexOf(q.symbol) < 0 || y == null || y <= 0 || y > 25) return;
+        out[q.symbol] = { yield: y, change: num(q.change), prev_close: num(q.previous_day_closing), open: num(q.open), high: num(q.high), low: num(q.low),
+          time: q.last_time || null, time_label: q.last_timedate || '', exchange: q.exchange || '', status: q.curmktstatus || '', name: q.name || q.symbol };
+      });
+      return out;
+    }
+    function emit() { subs.forEach(function (f) { try { f(state); } catch (e) { console.error(e); } }); }
+    function refresh(manual) {
+      if (state.busy) return; state.busy = true; emit();
+      var ctl = window.AbortController ? new AbortController() : null, to = setTimeout(function () { if (ctl) ctl.abort(); }, 12000);
+      fetch(URL + '&_=' + Date.now(), { cache: 'no-store', credentials: 'omit', signal: ctl ? ctl.signal : undefined })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (j) {
+          var q = parse(j); if (!q.US10Y || !q.US2Y) throw new Error('no 2Y/10Y in response');
+          state.quotes = q; state.mode = 'live'; state.fetchedAt = new Date(); state.error = '';
+          if (manual) toast('Treasuries refreshed');
+        })
+        .catch(function (e) {
+          state.error = (e && e.name === 'AbortError') ? 'timed out' : (e && e.message) || 'blocked';
+          if (state.mode !== 'live') { state.mode = snap ? 'snapshot' : 'none'; }
+          if (manual) toast('Live quote fetch failed (' + state.error + ')');
+        })
+        .then(function () { clearTimeout(to); state.busy = false; emit(); });
+    }
+    function schedule() {
+      clearInterval(timer); timer = null;
+      if (auto) timer = setInterval(function () { if (!document.hidden) refresh(false); }, EVERY);
+    }
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden && auto && state.fetchedAt && Date.now() - state.fetchedAt.getTime() > EVERY) refresh(false);
+    });
+    var started = false;
+    return {
+      state: state, every: EVERY, snap: snap,
+      subscribe: function (f) { subs.push(f); f(state); if (!started) { started = true; refresh(false); schedule(); } },
+      refresh: refresh,
+      auto: function (v) { if (v === undefined) return auto; auto = !!v; store.set('deskhub.liveAuto', auto); schedule(); if (auto) refresh(false); }
+    };
+  })();
+  function ctTime(d, withDate) {
+    if (!d || isNaN(d)) return '—';
+    var o = { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' };
+    var t = d.toLocaleTimeString('en-US', o), ds = d.toLocaleDateString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' });
+    var today = new Date().toLocaleDateString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' });
+    return (withDate || ds !== today ? ds + ', ' : '') + t + ' CT';
+  }
+  function liveCard(opts) {
+    opts = opts || {};
+    var body = h('div', { class: 'live-body' }), status = h('div', { class: 'live-status fine' });
+    var btn = h('button', { class: 'btn sm', onclick: function () { LIVE.refresh(true); } }, '↻ Refresh');
+    var cb = h('input', { type: 'checkbox', onchange: function () { LIVE.auto(this.checked); } }); cb.checked = LIVE.auto();
+    var badge = h('span', { class: 'badge' }, '');
+    var card = h('div', { class: 'card live' }, [
+      h('div', { class: 'live-head' }, [h('h2', null, ['Live Treasuries', badge, h('span', { class: 'badge gray' }, 'Tradeweb OTC via CNBC')]),
+        h('div', { class: 'live-ctl' }, [h('label', { class: 'fine live-auto' }, [cb, ' auto-refresh every ' + Math.round(LIVE.every / 60000) + ' min']), btn])]),
+      body, status,
+      h('p', { class: 'fine' }, 'Live strip only — separate from the brief history' + (opts.home ? ' and KPI cards above' : ' charts below') + ', which stay the once-a-day AM prints from each brief. ' +
+        'Yields are on-the-run OTC quotes (Tradeweb, as published on CNBC; may lag a few seconds), not official Treasury CMT closes. Spreads = simple differences, in bp. Chg = vs prior close. ' +
+        'Brief AM column = level printed in the ' + (latest ? shortDate(latest.date) : 'latest') + ' brief.')
+    ]);
+    var bpf = function (v, dp, sign) { return v == null || !isFinite(v) ? '—' : (sign && v > 0 ? '+' : v < 0 ? '−' : '') + nf(Math.abs(v), dp == null ? 1 : dp); };
+    var cls = function (v) { return v == null ? 'flat' : v > 0.00001 ? 'up' : v < -0.00001 ? 'dn' : 'flat'; };
+    function render(s) {
+      body.innerHTML = ''; btn.disabled = s.busy ? true : null; btn.textContent = s.busy ? '↻ Refreshing…' : '↻ Refresh';
+      badge.className = 'badge ' + (s.mode === 'live' ? 'green' : s.mode === 'snapshot' ? 'gold' : 'gray');
+      badge.textContent = s.mode === 'live' ? 'LIVE · browser fetch' : s.mode === 'snapshot' ? 'as of last hub update' : 'unavailable';
+      var Q = s.quotes;
+      if (!Q) { body.appendChild(h('p', { class: 'empty' }, 'No live quotes yet' + (s.error ? ' (' + s.error + ')' : '') + '. Use the CNBC links in Quick links.')); }
+      else {
+        var tenors = [['US1Y', '1Y'], ['US2Y', '2Y', 'ust2'], ['US5Y', '5Y'], ['US10Y', '10Y', 'ust10'], ['US30Y', '30Y']];
+        body.appendChild(h('div', { class: 'live-grid' }, tenors.filter(function (t) { return Q[t[0]]; }).map(function (t) {
+          var q = Q[t[0]], chg = q.change != null ? q.change * 100 : null, br = t[2] && L[t[2]] != null ? (q.yield - L[t[2]]) * 100 : null;
+          return h('div', { class: 'live-cell', title: (q.name || t[0]) + ' · ' + (q.exchange || '') + ' · last trade ' + ctTime(q.time ? new Date(q.time) : null, true) + (q.time_label ? ' (' + q.time_label + ')' : '') }, [
+            h('div', { class: 'lb' }, t[1]), h('div', { class: 'v' }, nf(q.yield, 3) + '%'),
+            h('div', { class: 's ' + cls(chg) }, bpf(chg, 1, true) + ' bp'),
+            t[2] ? h('div', { class: 'br ' + cls(br) }, 'vs brief AM ' + nf(L[t[2]], 2) + '%: ' + bpf(br, 1, true) + ' bp') : null]);
+        })));
+        var sp = function (a, b) { return Q[a] && Q[b] ? (Q[b].yield - Q[a].yield) * 100 : null; };
+        var spc = function (a, b) { return Q[a] && Q[b] && Q[a].change != null && Q[b].change != null ? (Q[b].change - Q[a].change) * 100 : null; };
+        var spreads = [['2s10s', 'US2Y', 'US10Y', 10, 2], ['5s30s', 'US5Y', 'US30Y'], ['10s30s', 'US10Y', 'US30Y'], ['2s5s', 'US2Y', 'US5Y']];
+        body.appendChild(h('div', { class: 'live-spreads' }, spreads.filter(function (x) { return Q[x[1]] && Q[x[2]]; }).map(function (x) {
+          var v = sp(x[1], x[2]), c = spc(x[1], x[2]), br = x[0] === '2s10s' && L.ust10 != null && L.ust2 != null ? (L.ust10 - L.ust2) * 100 : null;
+          return h('div', { class: 'live-sp' }, [h('b', null, x[0]), h('span', { class: 'n' }, bpf(v, 1, true) + ' bp'),
+            h('span', { class: 's ' + (c == null ? 'flat' : c > 0 ? 'steep' : c < 0 ? 'flatn' : 'flat') }, (c == null ? '' : bpf(c, 1, true) + ' bp d/d')),
+            br != null ? h('span', { class: 'fine' }, ' · brief AM ' + bpf(br, 0, true)) : null]);
+        })));
+        var t10 = Q.US10Y && Q.US10Y.time ? new Date(Q.US10Y.time) : null;
+        var stale = t10 && Date.now() - t10.getTime() > 30 * 60000;
+        status.innerHTML = '';
+        add(status, [
+          h('b', null, 'Quote time (10Y last trade): ' + ctTime(t10, true)),
+          Q.US10Y && Q.US10Y.time_label ? ' (' + Q.US10Y.time_label + ' per CNBC)' : '',
+          stale ? h('span', { class: 'badge gray' }, 'no trade in 30+ min — market closed/quiet') : null,
+          ' · ' + (s.mode === 'live' ? 'Fetched live ' + ctTime(s.fetchedAt) + (LIVE.auto() ? ' · next auto-refresh in ~' + Math.round(LIVE.every / 60000) + ' min' : '') :
+            'Snapshot from last hub update ' + (LIVE.snap ? LIVE.snap.fetched_at_ct : '') + (s.error ? ' — live browser fetch failed (' + s.error + '); refreshes on next publish' : '')),
+          ' · ', h('a', { href: 'https://www.cnbc.com/quotes/US10Y', target: '_blank', rel: 'noopener' }, 'CNBC US10Y ↗'),
+          ' ', h('a', { href: 'https://www.cnbc.com/quotes/US2Y', target: '_blank', rel: 'noopener' }, 'US2Y ↗')
+        ]);
+        return;
+      }
+      status.textContent = '';
+    }
+    LIVE.subscribe(render);
+    return card;
+  }
+
   /* ================= shell / router ================= */
   var SECTIONS = [
     ['home', 'Today', '⌂'], ['briefs', 'Briefs archive', '✉'], ['links', 'Market data links', '↗'], ['rates', 'Rates history', '∿'],
@@ -95,7 +216,7 @@
     containers[s[0]] = main.appendChild(h('section', { id: 'sec-' + s[0], hidden: true }));
   });
   nav.appendChild(h('div', { class: 'foot' }, [
-    'Public sources only. No internal firm data. Market numbers come from dated desk briefs; calculator defaults are example numbers.',
+    'Public sources only. No internal firm data. Market numbers come from dated desk briefs (except the Live Treasuries strip: public Tradeweb quotes via CNBC); calculator defaults are example numbers.',
     h('br'), 'Built ' + D.meta.built_at + ' · ' + D.meta.brief_count + ' brief files'
   ]));
   document.getElementById('topMeta').innerHTML = latest ? 'Latest brief <b>' + esc(fmtDate(latest.date)) + '</b> · built ' + esc(D.meta.built_at) : '';
@@ -186,6 +307,7 @@
         c.key ? h('div', { class: 'flat', title: 'Trend across ' + rates.length + ' daily briefs' }, sparkline(c.key)) : null,
         h('div', { class: 'src' }, 'Brief ' + shortDate(latest.date) + ' · ' + c.src)]);
     })));
+    el.appendChild(liveCard({ home: true }));
     if (hd.headline) {
       var lead = hd.lead ? h('div', { class: 'l clamp' }, hd.lead) : null;
       el.appendChild(h('div', { class: 'banner' }, [h('div', { class: 'h' }, hd.headline), lead,
@@ -222,7 +344,7 @@
       ['KBRA RMBS', 'https://www.kbra.com/sectors/rmbs/transactions'], ['HousingWire', 'https://www.housingwire.com/'], ['FRED DGS10', 'https://fred.stlouisfed.org/series/DGS10']];
     el.appendChild(h('div', { class: 'card' }, [h('h2', null, 'Quick links'), h('div', { class: 'chips' }, quick.map(function (q) { return h('a', { class: 'chip', href: q[1], target: '_blank', rel: 'noopener' }, q[0] + ' ↗'); })
       .concat([h('a', { class: 'chip', href: '#calcs' }, '∑ Calculators'), h('a', { class: 'chip', href: '#guides/asks' }, '? PM asks table'), h('a', { class: 'chip', href: '#notes' }, '✎ Log a PM question'), h('a', { class: 'chip', href: '#deals' }, '☰ Deal tracker')]))]));
-    el.appendChild(h('p', { class: 'fine' }, 'All levels above are copied from the dated brief file; nothing is fetched live or estimated. ' + (latest.sources ? latest.sources.slice(0, 400) + (latest.sources.length > 400 ? '…' : '') : '')));
+    el.appendChild(h('p', { class: 'fine' }, 'KPI cards, curve table and takeaways are copied from the dated brief file; nothing there is fetched live or estimated. Only the Live Treasuries strip is fetched live (public Tradeweb quotes via CNBC). ' + (latest.sources ? latest.sources.slice(0, 400) + (latest.sources.length > 400 ? '…' : '') : '')));
   };
 
   /* ================= BRIEFS ================= */
@@ -368,6 +490,7 @@
   }
   RENDER.rates = function (el) {
     el.appendChild(head('Rates history', 'From daily briefs only — one point per brief date (' + rates.length + ' points, ' + (rates.length ? fmtDate(rates[0].date) + ' – ' + fmtDate(rates[rates.length - 1].date) : '') + '). 10Y/2Y = AM yield shown in each brief; MND 30 = prior-day close cited; PMMS = latest weekly survey cited.'));
+    el.appendChild(liveCard());
     el.appendChild(h('div', { class: 'card' }, [h('h2', null, ['10Y · 2Y · MND 30 · PMMS 30 (%)', h('span', { class: 'badge gold' }, 'from daily briefs')]),
       lineChart(rates, [
         { key: 'ust10', label: '10Y', color: '#2f6fb3', get: function (r) { return r.ust10; } },
