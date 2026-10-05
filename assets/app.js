@@ -260,6 +260,7 @@
       else if (r.indexOf('day:') === 0) { var t = +r.slice(4), td = new Date(Date.UTC(y, m, t)); while (!isBiz(td)) td = new Date(td.getTime() + 864e5); hit = iso(td) === ds; }
       if (hit) out.push({ time: e.time, what: e.what + (r === 'firstfri' ? ' (usual first-Friday rule — confirm on BLS)' : ''), source: e.source, key: e.key });
     });
+    (D.calendar.dated || []).forEach(function (e) { if (e.date === ds) out.push({ time: e.time, what: e.what, source: e.source, key: e.key }); });
     D.calendar.fomc.forEach(function (f) {
       if (f.decision === ds) out.push({ time: '1:00 pm', what: 'FOMC decision (' + f.dates + ')' + (f.sep ? ' + SEP/dots' : '') + '; presser 1:30 pm', source: 'Federal Reserve', key: true });
       var prev = iso(new Date(pd(f.decision).getTime() - 864e5)); if (prev === ds) out.push({ time: '—', what: 'FOMC day 1 (' + f.dates + ')', source: 'Federal Reserve' });
@@ -732,6 +733,7 @@
     g2.appendChild(h('div', { class: 'card' }, [h('h2', null, 'Weekly (§12.2)'), table([{ label: 'Day', get: function (r) { return r.dow ? DOW[r.dow] : 'Daily'; } }, { label: 'Time (CT)', get: function (r) { return h('b', null, r.time); } }, { label: 'Item', get: function (r) { return r.what; } }, { label: 'Source', get: function (r) { return r.source; } }], D.calendar.weekly)]));
     g2.appendChild(h('div', { class: 'card' }, [h('h2', null, 'Monthly & quarterly (§12.3, §8.4)'), table([{ label: 'When', get: function (r) { return h('b', null, r.when); } }, { label: 'Time (CT)', get: function (r) { return r.time; } }, { label: 'Item', get: function (r) { return r.what; } }, { label: 'Source', get: function (r) { return r.source; } }], D.calendar.monthly)]));
     g2.appendChild(h('div', { class: 'card' }, [h('h2', null, 'FOMC'), table([{ label: 'Meeting', get: function (r) { return h('b', null, r.dates); } }, { label: 'Decision (CT)', get: function (r) { return fmtDate(r.decision) + ' 1:00 pm'; } }, { label: 'SEP / dots', get: function (r) { return r.sep ? 'Yes' : '—'; } }], D.calendar.fomc), h('p', { class: 'fine' }, D.calendar.fomc_source)]));
+    if ((D.calendar.dated || []).length) el.appendChild(h('div', { class: 'card' }, [h('h2', null, 'Dated events (one-off, CT)'), table([{ label: 'Date', get: function (r) { return h('b', null, fmtDate(r.date)); } }, { label: 'Time (CT)', get: function (r) { return r.time; } }, { label: 'Event', get: function (r) { return r.what; } }, { label: 'Source', get: function (r) { return r.source; } }], D.calendar.dated), D.calendar.dated_source ? h('p', { class: 'fine' }, D.calendar.dated_source) : null]));
   };
 
   /* ================= DEALS ================= */
