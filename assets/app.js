@@ -205,14 +205,15 @@
 
   /* ================= shell / router ================= */
   var SECTIONS = [
-    ['home', 'Today', '⌂'], ['briefs', 'Briefs archive', '✉'], ['links', 'Market data links', '↗'], ['rates', 'Rates history', '∿'],
+    ['home', 'Today', '⌂'], ['news', 'News', '◉'], ['briefs', 'Briefs archive', '✉'], ['links', 'Market data links', '↗'], ['rates', 'Rates history', '∿'],
     ['guides', 'Guides', '▤'], ['calcs', 'Calculators', '∑'], ['calendar', 'Calendar', '▦'], ['deals', 'Deal tracker', '☰'],
     ['notes', 'PM question log', '✎'], ['glossary', 'Glossary', 'Aa']
   ];
   var RENDER = {}, rendered = {}, containers = {};
   var nav = document.getElementById('sidenav'), main = document.getElementById('main');
   SECTIONS.forEach(function (s) {
-    nav.appendChild(h('a', { href: '#' + s[0], 'data-id': s[0] }, [h('span', { class: 'ico', 'aria-hidden': 'true' }, s[2]), s[1]]));
+    nav.appendChild(h('a', { href: '#' + s[0], 'data-id': s[0] }, [h('span', { class: 'ico', 'aria-hidden': 'true' }, s[2]), s[1],
+      s[0] === 'news' && D.digests && D.digests.length ? h('span', { class: 'nav-n', title: D.digests.length + ' digests' }, String(D.digests.length)) : null]));
     containers[s[0]] = main.appendChild(h('section', { id: 'sec-' + s[0], hidden: true }));
   });
   nav.appendChild(h('div', { class: 'foot' }, [
@@ -277,6 +278,102 @@
     return res.slice(0, n);
   }
 
+  /* ================= NEWS (daily digests: pre-market / midday housing scan / EOD wrap) ================= */
+  var NEWS_TYPES = [['premarket', 'Pre-market'], ['midday', 'Midday'], ['eod', 'EOD']];
+  var NEWS_ORDER = { premarket: 1, midday: 2, eod: 3 };
+  var digests = (D.digests || []).map(function (d) { return Object.assign({ type: 'premarket', typeLabel: 'Pre-market' }, d); })
+    .sort(function (a, b) { return b.date.localeCompare(a.date) || (NEWS_ORDER[b.type] || 0) - (NEWS_ORDER[a.type] || 0) || a.file.localeCompare(b.file); });
+  var latestDigest = digests[0] || null;
+  function typeChip(d) { return h('span', { class: 'tchip t-' + d.type, title: d.file }, d.typeLabel || d.type); }
+  function digestText(d) { return d.text || (d.html || '').replace(/<[^>]+>/g, ' '); }
+  function highlightDom(root, ts) {
+    if (!ts.length) return 0;
+    var re = new RegExp('(' + ts.map(reEsc).join('|') + ')', 'gi'), n = 0, nodes = [];
+    var w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false), t;
+    while ((t = w.nextNode())) { if (t.nodeValue && re.test(t.nodeValue)) nodes.push(t); re.lastIndex = 0; }
+    nodes.forEach(function (node) {
+      var frag = document.createDocumentFragment(), parts = node.nodeValue.split(re);
+      parts.forEach(function (p, i) { if (!p) return; if (i % 2) { frag.appendChild(h('mark', null, p)); n++; } else frag.appendChild(document.createTextNode(p)); });
+      node.parentNode.replaceChild(frag, node);
+    });
+    return n;
+  }
+  function newsLatestCard() {
+    var d = latestDigest;
+    if (!d) return null;
+    var sameDay = digests.filter(function (x) { return x.date === d.date && x !== d; });
+    var lead = d.lead ? h('div', { class: 'nl-lead clamp', html: d.lead }) : null;
+    return h('div', { class: 'card news-latest t-' + d.type }, [
+      h('h2', null, ['Latest news', typeChip(d), h('span', { class: 'badge' }, fmtDate(d.date)), h('span', { class: 'grow' }),
+        h('a', { class: 'btn sm', href: '#news/' + d.id }, 'Open in News →')]),
+      h('h3', { class: 'nl-title' }, h('a', { href: '#news/' + d.id }, d.title || d.file)),
+      lead,
+      d.takeaways && d.takeaways.length ? [h('div', { class: 'nl-tkh' }, d.takeawaysHeading || 'Takeaways'),
+        h('ol', { class: 'nl-tk' }, d.takeaways.map(function (t) { return h('li', { html: t }); }))] : null,
+      h('div', { class: 'nl-foot fine' }, [
+        sameDay.length ? ['Also ' + shortDate(d.date) + ': ', sameDay.map(function (x) { return h('a', { class: 'nl-also', href: '#news/' + x.id }, [typeChip(x), ' ', x.title]); })] : null,
+        h('span', null, ' ' + digests.length + ' digests in News · public sources only · links open in a new tab')
+      ])
+    ]);
+  }
+  RENDER.news = function (el, sub) {
+    var counts = {}; digests.forEach(function (d) { counts[d.type] = (counts[d.type] || 0) + 1; });
+    var days = []; digests.forEach(function (d) { if (days.indexOf(d.date) < 0) days.push(d.date); });
+    el.appendChild(head('News', digests.length + ' daily digests across ' + days.length + ' days — pre-market digest, midday housing scan and EOD wrap — newest first. ' +
+      'Written from public sources only; every link opens the original in a new tab.',
+      latestDigest ? h('div', { class: 'chips' }, [h('a', { class: 'btn ghost', href: '#home' }, '⌂ Today')]) : null));
+    if (!digests.length) { el.appendChild(h('div', { class: 'card empty' }, 'No digests yet. Add premarket-digest-YYYY-MM-DD.md, midday-scan-YYYY-MM-DD.md or eod-wrap-YYYY-MM-DD.md to the brief folder and rebuild.')); return; }
+    var filter = '', q = h('input', { type: 'search', placeholder: 'Search all digests (e.g. "NQM10", "auction", "Hormuz")…', 'aria-label': 'Search digests' });
+    var cnt = h('span', { class: 'fine news-count' });
+    var chips = h('div', { class: 'chips news-filter', role: 'group', 'aria-label': 'Filter by type' });
+    [['', 'All', digests.length]].concat(NEWS_TYPES.map(function (t) { return [t[0], t[1], counts[t[0]] || 0]; })).forEach(function (t) {
+      chips.appendChild(h('button', { class: 'chip' + (t[0] === '' ? ' on' : '') + (t[0] ? ' f-' + t[0] : ''), 'data-type': t[0], 'aria-pressed': t[0] === '' ? 'true' : 'false',
+        onclick: function () { filter = t[0]; [].forEach.call(chips.children, function (c) { var on = c.getAttribute('data-type') === filter; c.classList.toggle('on', on); c.setAttribute('aria-pressed', on ? 'true' : 'false'); }); render(); } },
+        [t[0] ? h('span', { class: 'dot t-' + t[0] }) : null, t[1] + ' ', h('span', { class: 'n' }, String(t[2]))]));
+    });
+    var openAll = h('button', { class: 'btn ghost sm', onclick: function () { [].forEach.call(list.querySelectorAll('details.news-item'), function (x) { x.open = true; }); } }, 'Expand all');
+    var closeAll = h('button', { class: 'btn ghost sm', onclick: function () { [].forEach.call(list.querySelectorAll('details.news-item'), function (x) { x.open = false; }); } }, 'Collapse all');
+    el.appendChild(h('div', { class: 'toolbar news-toolbar' }, [h('div', { class: 'grow' }, q), chips, cnt, openAll, closeAll]));
+    var list = el.appendChild(h('div', { class: 'news-list' }));
+    var openIds = {}; if (latestDigest) openIds[latestDigest.id] = true;
+    function render() {
+      var ts = terms(q.value); list.innerHTML = ''; var shown = 0, hits = 0;
+      days.forEach(function (day) {
+        var items = digests.filter(function (d) { return d.date === day && (!filter || d.type === filter) && (!ts.length || matchAll([d.title, d.typeLabel, d.file, digestText(d)].join(' '), ts)); });
+        if (!items.length) return;
+        var grp = list.appendChild(h('div', { class: 'news-day', 'data-date': day }, [h('h2', { class: 'news-date' }, [fmtDate(day), h('span', { class: 'badge gray' }, items.length + (items.length > 1 ? ' digests' : ' digest'))])]));
+        items.forEach(function (d) {
+          shown++;
+          var body = h('div', { class: 'doc news-body', html: d.html });
+          hits += highlightDom(body, ts);
+          var det = h('details', { class: 'card news-item t-' + d.type, id: 'news-' + d.id, 'data-id': d.id, 'data-type': d.type }, [
+            h('summary', null, [typeChip(d), h('span', { class: 'nt' }, d.title || d.file), h('span', { class: 'badge gray nf' }, d.file)]),
+            body,
+            h('div', { class: 'news-actions' }, [h('a', { class: 'btn ghost sm', href: '#news/' + d.id }, 'Link to this digest'),
+              h('button', { class: 'btn ghost sm', onclick: function () { download(d.file, d.markdown || digestText(d), 'text/markdown;charset=utf-8'); } }, 'Download text')])
+          ]);
+          det.open = ts.length ? true : !!openIds[d.id];
+          det.addEventListener('toggle', function () { openIds[d.id] = det.open; });
+          var st = det.querySelector('summary'); highlightDom(st.querySelector('.nt'), ts);
+          grp.appendChild(det);
+        });
+      });
+      cnt.textContent = shown + ' of ' + digests.length + ' digests' + (ts.length ? ' · ' + hits + ' match' + (hits === 1 ? '' : 'es') : '');
+      if (!shown) list.appendChild(h('div', { class: 'card empty' }, 'No digests match' + (filter ? ' this type' : '') + (ts.length ? ' “' + q.value + '”' : '') + '.'));
+    }
+    var tmr; q.addEventListener('input', function () { clearTimeout(tmr); tmr = setTimeout(render, 120); });
+    render();
+    function pick(s) {
+      if (!s || !s[0]) return;
+      var d = digests.filter(function (x) { return x.id === s[0]; })[0]; if (!d) return;
+      if (filter && filter !== d.type) chips.querySelector('[data-type=""]').click();
+      var node = document.getElementById('news-' + d.id);
+      if (!node && q.value) { q.value = ''; render(); node = document.getElementById('news-' + d.id); }
+      if (node) { node.open = true; openIds[d.id] = true; setTimeout(function () { node.scrollIntoView({ block: 'start' }); node.classList.add('flash'); setTimeout(function () { node.classList.remove('flash'); }, 1600); }, 30); }
+    }
+    RENDER.news.onShow = pick; pick(sub);
+  };
+
   /* ================= HOME ================= */
   function sparkline(key) {
     var pts = rates.map(function (r) { return r[key]; }), vals = pts.filter(function (v) { return v != null; });
@@ -314,6 +411,7 @@
       el.appendChild(h('div', { class: 'banner' }, [h('div', { class: 'h' }, hd.headline), lead,
         lead ? h('button', { class: 'more', onclick: function () { var c = lead.classList.toggle('clamp'); this.textContent = c ? 'Show full lead ▾' : 'Show less ▴'; } }, 'Show full lead ▾') : null]));
     }
+    var nlc = newsLatestCard(); if (nlc) el.appendChild(nlc);
     if (pulseBrief) {
       var P = pulseBrief.pulse;
       el.appendChild(h('div', { class: 'card' }, [
@@ -402,13 +500,15 @@
     RENDER.briefs.onShow = pick; pick(sub);
     // digests
     var dq = h('input', { type: 'search', placeholder: 'Search digests…' });
+    bodyD.appendChild(h('div', { class: 'banner' }, [h('div', { class: 'h' }, 'Digests now have their own News section'),
+      h('div', { class: 'l' }, ['Pre-market, midday and EOD digests grouped by day, with type filters and highlighted search. ', h('a', { href: '#news' }, 'Open News →')])]));
     bodyD.appendChild(h('div', { class: 'toolbar' }, h('div', { class: 'grow' }, dq)));
     var dl = bodyD.appendChild(h('div'));
     function renderDigests() {
       var ts = terms(dq.value); dl.innerHTML = '';
-      D.digests.slice().sort(function (a, b) { return b.date.localeCompare(a.date); }).forEach(function (d) {
+      digests.forEach(function (d) {
         if (ts.length && !matchAll(d.html.replace(/<[^>]+>/g, ' '), ts)) return;
-        var det = h('details', { class: 'card' }, [h('summary', null, [h('b', null, fmtDate(d.date) + ' — '), d.title + ' ', h('span', { class: 'badge gray' }, d.file)]), h('div', { class: 'doc digest', html: d.html })]);
+        var det = h('details', { class: 'card' }, [h('summary', null, [h('b', null, fmtDate(d.date) + ' — '), typeChip(d), ' ', d.title + ' ', h('span', { class: 'badge gray' }, d.file), ' ', h('a', { href: '#news/' + d.id, class: 'fine' }, 'open in News →')]), h('div', { class: 'doc digest', html: d.html })]);
         dl.appendChild(det);
       });
       if (!dl.children.length) dl.appendChild(h('div', { class: 'card empty' }, 'No digests match.'));
