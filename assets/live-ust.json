@@ -1,6 +1,6 @@
 {
- "fetched_at": "2026-11-17T11:34:00.372Z",
- "fetched_at_ct": "Nov 17, 2026, 5:34 AM CT",
+ "fetched_at": "2026-11-17T12:06:03.774Z",
+ "fetched_at_ct": "Nov 17, 2026, 6:06 AM CT",
  "source": "Tradeweb OTC via CNBC public quote feed",
  "url": "https://www.cnbc.com/quotes/US10Y",
  "quotes": {
@@ -11,8 +11,8 @@
    "open": 4.615,
    "high": 4.626,
    "low": 4.599,
-   "time": "2026-11-17T06:32:48.000-0500",
-   "time_label": "6:32 AM EST",
+   "time": "2026-11-17T07:00:02.000-0500",
+   "time_label": "7:00 AM EST",
    "exchange": "Tradeweb",
    "status": "REG_MKT",
    "name": "U.S. 1 Year Treasury"
@@ -24,8 +24,8 @@
    "open": 4.823,
    "high": 4.832,
    "low": 4.783,
-   "time": "2026-11-17T06:33:47.000-0500",
-   "time_label": "6:33 AM EST",
+   "time": "2026-11-17T07:05:03.000-0500",
+   "time_label": "7:05 AM EST",
    "exchange": "Tradeweb",
    "status": "REG_MKT",
    "name": "U.S. 2 Year Treasury"
@@ -37,8 +37,8 @@
    "open": 4.931,
    "high": 4.944,
    "low": 4.893,
-   "time": "2026-11-17T06:33:59.000-0500",
-   "time_label": "6:33 AM EST",
+   "time": "2026-11-17T07:05:53.000-0500",
+   "time_label": "7:05 AM EST",
    "exchange": "Tradeweb",
    "status": "REG_MKT",
    "name": "U.S. 5 Year Treasury"
@@ -50,8 +50,8 @@
    "open": 5.121,
    "high": 5.137,
    "low": 5.093,
-   "time": "2026-11-17T06:33:45.000-0500",
-   "time_label": "6:33 AM EST",
+   "time": "2026-11-17T07:03:58.000-0500",
+   "time_label": "7:03 AM EST",
    "exchange": "Tradeweb",
    "status": "REG_MKT",
    "name": "U.S. 10 Year Treasury"
@@ -63,8 +63,8 @@
    "open": 5.47,
    "high": 5.487,
    "low": 5.45,
-   "time": "2026-11-17T06:33:54.000-0500",
-   "time_label": "6:33 AM EST",
+   "time": "2026-11-17T07:05:36.000-0500",
+   "time_label": "7:05 AM EST",
    "exchange": "Tradeweb",
    "status": "REG_MKT",
    "name": "U.S. 30 Year Treasury"
